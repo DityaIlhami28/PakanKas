@@ -98,7 +98,6 @@ export class AuthService {
 
         const tokens = await this.getTokens(user.id);
         await this.updateRefreshToken(user.id, tokens.refreshToken);
-        console.log(tokens);
 
         return {
             message: 'Login berhasil!',

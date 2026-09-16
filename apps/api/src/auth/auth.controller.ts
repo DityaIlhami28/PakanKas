@@ -1,14 +1,29 @@
-import { Body, Controller, Post, Req, Res, UnauthorizedException, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Req,
+  Res,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthGuard } from './auth.guard';
 import { AuthService } from './auth.service';
 import { LoginDto, RegisterDto } from './dto/auth.dto';
 
+interface JwtPayload {
+  sub: string;
+}
+
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(private readonly authService: AuthService) {}
 
   @Post('register')
+  @HttpCode(HttpStatus.CREATED) // Explicit real-world status code (201 Created)
   async register(
     @Body() dto: RegisterDto,
     @Res({ passthrough: true }) res: Response,
@@ -23,6 +38,7 @@ export class AuthController {
   }
 
   @Post('login')
+  @HttpCode(HttpStatus.OK) // Login requests should return a 200 OK status code instead of 201
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
@@ -37,54 +53,64 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @HttpCode(HttpStatus.OK) // Tokens renewals are resource access mutations returning 200 OK
   async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const refreshToken = req.cookies?.refresh_token ?? req.body?.refreshToken;
+    const refreshToken = req.cookies?.refresh_token;
 
     if (!refreshToken) {
-      throw new UnauthorizedException('Refresh token tidak ditemukan! Silakan login kembali.');
+      throw new UnauthorizedException('Sesi masuk telah berakhir. Silakan login kembali.');
     }
 
-    const payload = await this.authService.refreshTokens(refreshToken);
-    this.setAuthCookies(res, payload.accessToken, payload.refreshToken);
+    try {
+      const result = await this.authService.refreshTokens(refreshToken);
+      this.setAuthCookies(res, result.accessToken, result.refreshToken);
 
-    return {
-      message: 'Token berhasil diperbarui!',
-      user: payload.user,
-    };
+      return {
+        message: 'Akses token berhasil diperbarui.',
+        user: result.user,
+      };
+    } catch {
+      this.clearAuthCookies(res);
+      throw new UnauthorizedException('Token verifikasi tidak sah atau sudah kadaluwarsa.');
+    }
   }
 
   @UseGuards(AuthGuard)
   @Post('logout')
+  @HttpCode(HttpStatus.OK)
   async logout(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const user = req['user'] as { sub: string };
+    // Safely cast authenticated request user parameter
+    const user = req['user'] as JwtPayload;
+    
     await this.authService.logout(user.sub);
     this.clearAuthCookies(res);
 
-    return { message: 'Logout berhasil!' };
+    return { message: 'Logout berhasil, sesi aman dihapus!' };
   }
 
+  // Uniform security parameters configuration factory
   private setAuthCookies(res: Response, accessToken: string, refreshToken: string) {
-    const secure = process.env.NODE_ENV === 'production';
+    const isProduction = process.env.NODE_ENV === 'production';
 
     res.cookie('access_token', accessToken, {
       httpOnly: true,
-      secure,
-      sameSite: 'lax',
-      maxAge: 15 * 60 * 1000,
+      secure: isProduction, // Uses secure HTTPS connections during production mode instances
+      sameSite: 'lax',     // Lax is optimal for secure front-to-back app setups
+      maxAge: 15 * 60 * 1000, // Expires after 15 Minutes
       path: '/',
     });
 
     res.cookie('refresh_token', refreshToken, {
       httpOnly: true,
-      secure,
+      secure: isProduction,
       sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: 7 * 24 * 60 * 60 * 1000, // Expires after 7 Days
       path: '/',
     });
   }
