@@ -1,0 +1,59 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum TransactionType {
+  PEMBELIAN    // Beli dedak dari suplier / petani
+  PENJUALAN    // Jual dedak ke peternak / pembeli
+  OPERASIONAL  // Ongkos angkut, bensin, karung, upah
+}
+
+enum DedakType {
+  MURNI
+  CAMPURAN
+  CEPU
+  NON_DEDAK    // Khusus biaya operasional
+}
+
+enum PaymentStatus {
+  LUNAS
+  TEMPO        // Utang atau Piutang belum lunas
+}
+
+model Transaction {
+  id            String          @id @default(uuid())
+  type          TransactionType
+  dedakType     DedakType
+  title         String          // Contoh: "Jual 2 Ton Dedak Murni ke Pak Agus"
+  amount        Decimal         @db.Decimal(15, 2) // Total Rupiah
+  quantityKg    Decimal         @default(0) @db.Decimal(10, 2) // Mengubah Float ke Decimal agar timbangan akurat
+  pricePerKg    Decimal         @default(0) @db.Decimal(10, 2)
+  paymentStatus PaymentStatus   @default(LUNAS)
+  contactName   String?         // Nama Pembeli / Suplier
+  note          String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([createdAt])          // Bagus untuk fitur filter laporan bulanan/harian
+  @@index([contactName])        // Bagus untuk fitur pencarian nama pelanggan
+}
+
+model Inventory {
+  id         String    @id @default(uuid())
+  dedakType  DedakType @unique
+  stockKg    Decimal   @default(0) @db.Decimal(10, 2) // Mengubah ke Decimal agar sinkron dengan Transaksi
+  updatedAt  DateTime  @updatedAt
+}
+
+model User {
+  id              String @id @default(uuid())
+  name            String
+  email           String @unique
+  password        String
+  refresh_token   String? 
+}
