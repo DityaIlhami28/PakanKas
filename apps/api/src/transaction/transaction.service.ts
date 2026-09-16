@@ -15,30 +15,28 @@ export class TransactionService {
         'Jumlah kilo (quantityKg) wajib diisi untuk pembelian atau penjualan!',
       );
     }
-    
+
+    if (
+      dto.type !== 'OPERASIONAL' &&
+      (!dto.pricePerKg || dto.pricePerKg <= 0)
+    ) {
+      throw new BadRequestException(
+        'Harga per kilo (pricePerKg) wajib diisi untuk pembelian atau penjualan!',
+      );
+    }
+
     const quantity = dto.quantityKg ? dto.quantityKg : 0;
+    const amount =
+      dto.type === 'OPERASIONAL'
+        ? dto.amount
+        : quantity * (dto.pricePerKg ?? 0);
     return this.prisma.$transaction(async (tx) => {
-      
-      // JIKA PENJUALAN: Cek dulu apakah stok di gudang cukup
-      if (dto.type === 'PENJUALAN') {
-        const currentInventory = await tx.inventory.findUnique({
-          where: { dedakType: dto.dedakType },
-        });
-
-        const currentStock = currentInventory ? Number(currentInventory.stockKg) : 0;
-
-        if (currentStock < quantity) {
-          throw new BadRequestException(`Stok dedak ${dto.dedakType} tidak cukup! Stok saat ini: ${currentStock} KG.`);
-        }
-      }
-
-      // A. Simpan data transaksi ke database
       const transaction = await tx.transaction.create({
         data: {
           type: dto.type,
           dedakType: dto.dedakType,
           title: dto.title,
-          amount: dto.amount,
+          amount,
           quantityKg: quantity,
           pricePerKg: dto.pricePerKg || 0,
           paymentStatus: dto.paymentStatus || 'LUNAS',
@@ -47,22 +45,28 @@ export class TransactionService {
         },
       });
 
-      // B. Jalankan otomatisasi update stok di tabel Inventory (Kecuali biaya OPERASIONAL)
       if (dto.type !== 'OPERASIONAL') {
-        // Hitung berapa perubahan stoknya (+ jika beli, - jika jual)
-        const stockChange = dto.type === 'PEMBELIAN' ? quantity : -quantity;
+        if (dto.type === 'PENJUALAN') {
+          const stockUpdate = await tx.inventory.updateMany({
+            where: {
+              dedakType: dto.dedakType,
+              stockKg: { gte: quantity },
+            },
+            data: { stockKg: { decrement: quantity } },
+          });
 
-        // Gunakan upsert: Jika tipe dedak belum pernah ada di gudang, buat baru. Jika sudah ada, tambahkan/kurangi nilainya.
-        await tx.inventory.upsert({
-          where: { dedakType: dto.dedakType },
-          update: {
-            stockKg: { increment: stockChange },
-          },
-          create: {
-            dedakType: dto.dedakType,
-            stockKg: quantity, // Kalau pembelian pertama, langsung isi seberat kuantitas beli
-          },
-        });
+          if (stockUpdate.count === 0) {
+            throw new BadRequestException(
+              `Stok dedak ${dto.dedakType} tidak cukup untuk transaksi ini.`,
+            );
+          }
+        } else {
+          await tx.inventory.upsert({
+            where: { dedakType: dto.dedakType },
+            update: { stockKg: { increment: quantity } },
+            create: { dedakType: dto.dedakType, stockKg: quantity },
+          });
+        }
       }
 
       return {
@@ -78,6 +82,48 @@ export class TransactionService {
   }
 
   async getInventory() {
-    return this.prisma.inventory.findMany();
+    const [inventory, transactions] = await Promise.all([
+      this.prisma.inventory.findMany(),
+      this.prisma.transaction.findMany({
+        select: {
+          type: true,
+          dedakType: true,
+          amount: true,
+          quantityKg: true,
+        },
+      }),
+    ]);
+
+    return inventory.map((item) => {
+      const typeTransactions = transactions.filter(
+        (transaction) => transaction.dedakType === item.dedakType,
+      );
+      const purchasedTransactions = typeTransactions.filter(
+        (transaction) => transaction.type === 'PEMBELIAN',
+      );
+      const soldTransactions = typeTransactions.filter(
+        (transaction) => transaction.type === 'PENJUALAN',
+      );
+
+      return {
+        ...item,
+        dibeli: purchasedTransactions.reduce(
+          (total, transaction) => total + Number(transaction.quantityKg),
+          0,
+        ),
+        terjual: soldTransactions.reduce(
+          (total, transaction) => total + Number(transaction.quantityKg),
+          0,
+        ),
+        pembelianModal: purchasedTransactions.reduce(
+          (total, transaction) => total + Number(transaction.amount),
+          0,
+        ),
+        penjualan: soldTransactions.reduce(
+          (total, transaction) => total + Number(transaction.amount),
+          0,
+        ),
+      };
+    });
   }
 }

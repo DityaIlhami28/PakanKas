@@ -2,13 +2,10 @@ import { Module } from '@nestjs/common';
 import { TransactionService } from './transaction.service';
 import { TransactionController } from './transaction.controller';
 import { PrismaModule } from 'src/prisma/prisma.module';
-import { JwtModule } from '@nestjs/jwt';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [
-    PrismaModule,
-    JwtModule,
-  ],
+  imports: [PrismaModule, AuthModule],
   controllers: [TransactionController],
   providers: [TransactionService],
 })

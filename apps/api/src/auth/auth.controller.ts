@@ -11,12 +11,9 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthGuard } from './auth.guard';
+import type { AuthenticatedRequest } from './auth.guard';
 import { AuthService } from './auth.service';
 import { LoginDto, RegisterDto } from './dto/auth.dto';
-
-interface JwtPayload {
-  sub: string;
-}
 
 @Controller('auth')
 export class AuthController {
@@ -58,10 +55,13 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const refreshToken = req.cookies?.refresh_token;
+    const cookies = req.cookies as Record<string, unknown> | undefined;
+    const refreshToken = cookies?.refresh_token;
 
-    if (!refreshToken) {
-      throw new UnauthorizedException('Sesi masuk telah berakhir. Silakan login kembali.');
+    if (typeof refreshToken !== 'string' || refreshToken.length === 0) {
+      throw new UnauthorizedException(
+        'Sesi masuk telah berakhir. Silakan login kembali.',
+      );
     }
 
     try {
@@ -74,7 +74,9 @@ export class AuthController {
       };
     } catch {
       this.clearAuthCookies(res);
-      throw new UnauthorizedException('Token verifikasi tidak sah atau sudah kadaluwarsa.');
+      throw new UnauthorizedException(
+        'Token verifikasi tidak sah atau sudah kadaluwarsa.',
+      );
     }
   }
 
@@ -82,26 +84,27 @@ export class AuthController {
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   async logout(
-    @Req() req: Request,
+    @Req() req: AuthenticatedRequest,
     @Res({ passthrough: true }) res: Response,
   ) {
-    // Safely cast authenticated request user parameter
-    const user = req['user'] as JwtPayload;
-    
-    await this.authService.logout(user.sub);
+    await this.authService.logout(req.user.sub);
     this.clearAuthCookies(res);
 
     return { message: 'Logout berhasil, sesi aman dihapus!' };
   }
 
   // Uniform security parameters configuration factory
-  private setAuthCookies(res: Response, accessToken: string, refreshToken: string) {
+  private setAuthCookies(
+    res: Response,
+    accessToken: string,
+    refreshToken: string,
+  ) {
     const isProduction = process.env.NODE_ENV === 'production';
 
     res.cookie('access_token', accessToken, {
       httpOnly: true,
       secure: isProduction, // Uses secure HTTPS connections during production mode instances
-      sameSite: 'lax',     // Lax is optimal for secure front-to-back app setups
+      sameSite: 'lax', // Lax is optimal for secure front-to-back app setups
       maxAge: 15 * 60 * 1000, // Expires after 15 Minutes
       path: '/',
     });

@@ -1,5 +1,11 @@
 import { AuthGuard } from './auth.guard';
-import { JwtService } from '@nestjs/jwt';
+import type { JwtService } from '@nestjs/jwt';
+import type { ExecutionContext } from '@nestjs/common';
+import type { AuthenticatedRequest } from './auth.guard';
+
+jest.mock('@nestjs/jwt', () => ({
+  JwtService: class JwtService {},
+}));
 
 describe('AuthGuard', () => {
   const originalSecret = process.env.ACCESS_TOKEN_SECRET;
@@ -13,9 +19,10 @@ describe('AuthGuard', () => {
   });
 
   it('reads the access token from cookies when the Authorization header is missing', async () => {
-    const jwtService = {
-      verifyAsync: jest.fn().mockResolvedValue({ sub: 'user-1', name: 'Tester' }),
-    } as unknown as JwtService;
+    const verifyAsync = jest
+      .fn()
+      .mockResolvedValue({ sub: 'user-1', name: 'Tester' });
+    const jwtService = { verifyAsync } as unknown as JwtService;
 
     const guard = new AuthGuard(jwtService);
     const request = {
@@ -23,16 +30,16 @@ describe('AuthGuard', () => {
       cookies: {
         access_token: 'cookie-access-token',
       },
-    } as any;
+    } as unknown as AuthenticatedRequest;
 
     const context = {
       switchToHttp: () => ({
         getRequest: () => request,
       }),
-    } as any;
+    } as unknown as ExecutionContext;
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
-    expect(jwtService.verifyAsync).toHaveBeenCalledWith('cookie-access-token', {
+    expect(verifyAsync).toHaveBeenCalledWith('cookie-access-token', {
       secret: 'test-secret',
     });
   });
